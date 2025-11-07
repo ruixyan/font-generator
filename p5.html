@@ -1,0 +1,176 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Pixelated Word — p5.js</title>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.6.0/lib/p5.min.js"></script>
+  <style>
+    body { margin: 0; background: #111; color: #eee; font-family: system-ui, -apple-system, "Segoe UI", Roboto; }
+    .ui {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      z-index: 10;
+      background: rgba(0,0,0,0.4);
+      padding: 10px;
+      border-radius: 10px;
+      backdrop-filter: blur(4px);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+    }
+    .ui label { display: block; font-size: 12px; margin-bottom: 6px; color: #ddd; }
+    .ui input[type="range"] { width: 220px; }
+    .ui .row { margin-bottom: 8px; }
+    .hint { font-size: 12px; color:#aaa; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="ui" id="controls">
+    <div class="row">
+      <label for="resSlider">Resolution (pixels across): <span id="resVal">24</span></label>
+      <input id="resSlider" type="range" min="4" max="300" value="24" />
+    </div>
+    <div class="row">
+      <label for="wordInput">Word</label>
+      <input id="wordInput" type="text" value="HELLO" />
+    </div>
+    <div class="row">
+      <input id="gridCheck" type="checkbox" checked />
+      <label for="gridCheck" style="display:inline; margin-left:6px;">Show grid</label>
+    </div>
+    <div class="row">
+      <input id="invertCheck" type="checkbox" />
+      <label for="invertCheck" style="display:inline; margin-left:6px;">Invert colors</label>
+    </div>
+    <div class="hint">Drag slider to change blockiness. Type to change the word. Resize window freely.</div>
+    <!-- <div class="button_container">
+      <button id="voronoi" class="button">Voronoi</button>
+      <button id="flow" class="button">Flow</button>
+      <button id="conway" class="button">Conway</button>
+      <button id="reset" class="button">Perlin</button>
+    </div> -->
+  </div>
+
+  <script>
+    let resSlider, wordInput, gridCheck, invertCheck, resValLabel;
+    let gfx;
+    let prevRes = -1;
+    let noiseSlider, noiseValLabel;
+    let myFont;
+
+    // === Load custom font ===
+    function preload() {
+      myFont = loadFont('fonts/ShadowsIntoLightTwo-Regular.ttf'); // <-- put your font in "fonts/" folder
+    }
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      noSmooth();
+    
+      resSlider = select('#resSlider');
+      wordInput = select('#wordInput');
+      gridCheck = select('#gridCheck');
+      invertCheck = select('#invertCheck');
+      resValLabel = select('#resVal');
+    
+      // noise displacement slider
+      let controlsDiv = select('#controls');
+      let noiseDiv = createDiv(`
+        <div class="row">
+          <label for="noiseSlider">Noise displacement: <span id="noiseVal">0</span></label>
+          <input id="noiseSlider" type="range" min="0" max="10" value="0" step="0.1" />
+        </div>
+      `);
+      controlsDiv.child(noiseDiv);
+      noiseSlider = select('#noiseSlider');
+      noiseValLabel = select('#noiseVal');
+    
+      allocateGfx(int(resSlider.elt.value));
+    }
+    
+    function allocateGfx(cols) {
+      const aspect = height / width;
+      const rows = max(1, round(cols * aspect));
+      gfx = createGraphics(cols, rows);
+      gfx.pixelDensity(1);
+      gfx.noSmooth();
+      prevRes = cols;
+    }
+    
+    function draw() {
+      background(28);
+    
+      const cols = int(resSlider.elt.value);
+      const word = wordInput.value().trim() || " ";
+      const showGrid = gridCheck.elt.checked;
+      const invert = invertCheck.elt.checked;
+      const noiseAmt = float(noiseSlider.elt.value);
+      resValLabel.html(cols);
+      noiseValLabel.html(noiseAmt.toFixed(1));
+    
+      if (cols !== prevRes) allocateGfx(cols);
+    
+      // draw text to offscreen buffer
+      gfx.background(invert ? 255 : 0);
+      gfx.fill(invert ? 0 : 255);
+      gfx.textAlign(CENTER, CENTER);
+      gfx.textStyle(BOLD);
+      gfx.textFont(myFont); // <-- use custom font here
+    
+      // fit text to width
+      let sizeForGfx = gfx.height * 0.8;
+      gfx.textSize(sizeForGfx);
+      let tw = gfx.textWidth(word);
+      if (tw > gfx.width * 0.9) {
+        sizeForGfx *= (gfx.width * 0.9) / tw;
+        gfx.textSize(sizeForGfx);
+      }
+      gfx.text(word, gfx.width / 2, gfx.height / 2);
+    
+      const cellW = width / gfx.width;
+      const cellH = height / gfx.height;
+    
+      noStroke();
+      for (let y = 0; y < gfx.height; y++) {
+        for (let x = 0; x < gfx.width; x++) {
+    
+          // === noise displacement of sampling coordinates ===
+          const nX = noise(x * 0.15, y * 0.15);
+          const nY = noise(x * 0.15 + 100, y * 0.15 + 100);
+          const dx = map(nX, 0, 1, -noiseAmt, noiseAmt);
+          const dy = map(nY, 0, 1, -noiseAmt, noiseAmt);
+    
+          // sample displaced pixel from gfx
+          const sx = constrain(x + dx, 0, gfx.width - 1);
+          const sy = constrain(y + dy, 0, gfx.height - 1);
+          const c = gfx.get(sx, sy);
+    
+          // threshold to black/white
+          const brightnessVal = (red(c) + green(c) + blue(c)) / 3;
+          const bw = brightnessVal > 128 ? 255 : 0;
+    
+          fill(bw);
+          rect(x * cellW, y * cellH, cellW, cellH);
+        }
+      }
+    
+      // optional grid overlay
+      if (showGrid) {
+        stroke(255, 30);
+        strokeWeight(0.5);
+        noFill();
+        for (let y = 0; y <= gfx.height; y++) {
+          line(0, y * cellH, width, y * cellH);
+        }
+        for (let x = 0; x <= gfx.width; x++) {
+          line(x * cellW, 0, x * cellW, height);
+        }
+      }
+    }
+    
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      allocateGfx(int(resSlider.elt.value));
+    }
+  </script>
+</body>
+</html>
